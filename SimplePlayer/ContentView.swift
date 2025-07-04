@@ -8,33 +8,125 @@ struct Track: Identifiable, Equatable {
     let title: String
     let artist: String
     let artwork: UIImage?
+    
     static func == (lhs: Track, rhs: Track) -> Bool {
         lhs.url == rhs.url
     }
 }
 
+// Менеджер состояния плеера
+class PlayerManager: ObservableObject {
+    @Published var currentTrack: Track? = nil
+    @Published var isFullScreen: Bool = false
+}
+
 struct ContentView: View {
+    @StateObject private var playerManager = PlayerManager()
+    
     var body: some View {
-        TabView {
-            LibraryView()
-                .tabItem {
-                    Image(systemName: "music.note.list")
-                    Text("Медиатека")
+        ZStack(alignment: .bottom) {
+            TabView {
+                MusicLibraryView(playerManager: playerManager)
+                    .tabItem {
+                        Image(systemName: "music.note.list")
+                        Text("Медиатека")
+                    }
+                MusicSearchView()
+                    .tabItem {
+                        Image(systemName: "magnifyingglass")
+                        Text("Поиск")
+                    }
+            }
+            
+            // Мини-плеер или полноэкранный плеер поверх TabView
+            if let track = playerManager.currentTrack {
+                if playerManager.isFullScreen {
+                    MusicPlayerView(track: track, playerManager: playerManager)
+                        .transition(.move(edge: .bottom))
+                } else {
+                    MiniPlayerView(playerManager: playerManager)
+                        .transition(.move(edge: .bottom))
+                        .padding(.bottom, 49) // Отступ от TabBar
                 }
-            SearchView()
-                .tabItem {
-                    Image(systemName: "magnifyingglass")
-                    Text("Поиск")
-                }
+            }
         }
     }
 }
 
-struct LibraryView: View {
+// Мини-плеер поверх TabView
+struct MiniPlayerView: View {
+    @ObservedObject var playerManager: PlayerManager
+    @ObservedObject private var audioManager = AudioPlayerManager.shared
+    
+    var body: some View {
+        if let track = playerManager.currentTrack {
+            HStack {
+                // Обложка
+                if let artwork = track.artwork {
+                    Image(uiImage: artwork)
+                        .resizable()
+                        .aspectRatio(1, contentMode: .fill)
+                        .frame(width: 48, height: 48)
+                        .cornerRadius(8)
+                        .clipped()
+                } else {
+                    Image(systemName: "music.note")
+                        .resizable()
+                        .aspectRatio(1, contentMode: .fit)
+                        .frame(width: 48, height: 48)
+                        .foregroundColor(.gray)
+                        .background(Color(.systemGray4))
+                        .cornerRadius(8)
+                }
+                
+                // Название и артист
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title)
+                        .font(.system(size: 16, weight: .medium))
+                        .lineLimit(1)
+                        .foregroundColor(.primary)
+                    Text(track.artist)
+                        .font(.system(size: 14))
+                        .lineLimit(1)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                // Кнопка play/pause
+                Button(action: {
+                    if audioManager.isPlaying {
+                        audioManager.pause()
+                    } else {
+                        audioManager.resume()
+                    }
+                }) {
+                    Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(.primary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray6))
+                    .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+            )
+            .padding(.horizontal, 16)
+            .onTapGesture {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    playerManager.isFullScreen = true
+                }
+            }
+        }
+    }
+}
+
+struct MusicLibraryView: View {
+    @ObservedObject var playerManager: PlayerManager
     @State private var tracks: [Track] = []
     @State private var showImporter = false
-    @State private var selectedTrack: Track? = nil
-    @State private var showPlayer = false
     
     var body: some View {
         NavigationView {
@@ -46,8 +138,9 @@ struct LibraryView: View {
                 } else {
                     ForEach(tracks) { track in
                         Button(action: {
-                            selectedTrack = track
-                            showPlayer = true
+                            // Запускаем трек и открываем полноэкранный плеер
+                            playerManager.currentTrack = track
+                            playerManager.isFullScreen = true
                         }) {
                             HStack {
                                 if let artwork = track.artwork {
@@ -56,6 +149,7 @@ struct LibraryView: View {
                                         .aspectRatio(contentMode: .fill)
                                         .frame(width: 48, height: 48)
                                         .cornerRadius(6)
+                                        .clipped()
                                 } else {
                                     Image(systemName: "music.note")
                                         .resizable()
@@ -95,9 +189,6 @@ struct LibraryView: View {
                     importTracks(from: urls)
                 }
             }
-            .fullScreenCover(item: $selectedTrack) { track in
-                PlayerView(track: track, onClose: { selectedTrack = nil })
-            }
         }
         .onAppear {
             loadTracks()
@@ -107,10 +198,11 @@ struct LibraryView: View {
     func importTracks(from urls: [URL]) {
         let fileManager = FileManager.default
         let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        
         for url in urls {
             let fileName = url.lastPathComponent
             let destURL = docsURL.appendingPathComponent(fileName)
-            // Копируем файл, если его ещё нет в папке Documents
+            
             if !fileManager.fileExists(atPath: destURL.path) {
                 do {
                     try fileManager.copyItem(at: url, to: destURL)
@@ -119,10 +211,12 @@ struct LibraryView: View {
                     continue
                 }
             }
+            
             let asset = AVAsset(url: destURL)
             var title = destURL.lastPathComponent
             var artist = ""
             var artwork: UIImage? = nil
+            
             for meta in asset.commonMetadata {
                 if meta.commonKey?.rawValue == "title", let value = meta.value as? String {
                     title = value
@@ -134,6 +228,7 @@ struct LibraryView: View {
                     artwork = img
                 }
             }
+            
             let newTrack = Track(url: destURL, title: title, artist: artist, artwork: artwork)
             if !tracks.contains(newTrack) {
                 tracks.append(newTrack)
@@ -147,8 +242,8 @@ struct LibraryView: View {
         saveTracks()
     }
 
-    // MARK: - Persistence
     let tracksKey = "savedTracks"
+    
     func saveTracks() {
         let encoder = JSONEncoder()
         let codableTracks = tracks.map {
@@ -158,6 +253,7 @@ struct LibraryView: View {
             UserDefaults.standard.set(data, forKey: tracksKey)
         }
     }
+    
     func loadTracks() {
         let decoder = JSONDecoder()
         if let data = UserDefaults.standard.data(forKey: tracksKey),
@@ -166,6 +262,7 @@ struct LibraryView: View {
                 let url = URL(fileURLWithPath: codable.url)
                 let asset = AVAsset(url: url)
                 var artwork: UIImage? = nil
+                
                 for meta in asset.commonMetadata {
                     if meta.commonKey?.rawValue == "artwork", let data = meta.value as? Data, let img = UIImage(data: data) {
                         artwork = img
@@ -175,20 +272,17 @@ struct LibraryView: View {
             }
         }
     }
+    
     struct CodableTrack: Codable {
         let url: String
         let title: String
         let artist: String
     }
-
-    init() {
-        loadTracks()
-    }
 }
 
-struct PlayerView: View {
+struct MusicPlayerView: View {
     let track: Track
-    let onClose: () -> Void
+    @ObservedObject var playerManager: PlayerManager
     @ObservedObject private var audioManager = AudioPlayerManager.shared
     @State private var isSeeking = false
     @State private var seekTime: Double = 0
@@ -196,12 +290,17 @@ struct PlayerView: View {
     var body: some View {
         ZStack {
             Color(.systemGray5).ignoresSafeArea()
+            
             VStack(spacing: 24) {
+                // Капсула для свайпа вниз (убираем кнопку X)
                 Capsule()
                     .frame(width: 40, height: 5)
                     .foregroundColor(.gray.opacity(0.5))
                     .padding(.top, 16)
+                
                 Spacer()
+                
+                // Обложка
                 if let artwork = track.artwork {
                     Image(uiImage: artwork)
                         .resizable()
@@ -217,17 +316,21 @@ struct PlayerView: View {
                         .background(Color(.systemGray4))
                         .cornerRadius(20)
                 }
-                VStack(alignment: .leading, spacing: 4) {
+                
+                // Название и артист
+                VStack(spacing: 4) {
                     Text(track.title)
                         .font(.title2).bold()
                         .foregroundColor(.primary)
                         .lineLimit(2)
+                        .multilineTextAlignment(.center)
                     Text(track.artist)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 .padding(.horizontal)
+                
                 // Полоса перемотки и время
                 VStack {
                     Slider(
@@ -248,6 +351,7 @@ struct PlayerView: View {
                             }
                         }
                     )
+                    
                     HStack {
                         Text(formatTime(isSeeking ? seekTime : audioManager.currentTime))
                             .font(.caption)
@@ -259,6 +363,7 @@ struct PlayerView: View {
                     }
                 }
                 .padding(.horizontal)
+                
                 // Кнопки управления
                 HStack(spacing: 48) {
                     Button(action: {}) {
@@ -266,6 +371,7 @@ struct PlayerView: View {
                             .font(.system(size: 32))
                             .foregroundColor(.gray)
                     }
+                    
                     Button(action: {
                         togglePlayPause()
                     }) {
@@ -273,12 +379,14 @@ struct PlayerView: View {
                             .font(.system(size: 48))
                             .foregroundColor(.primary)
                     }
+                    
                     Button(action: {}) {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 32))
                             .foregroundColor(.gray)
                     }
                 }
+                
                 // Громкость
                 HStack {
                     Image(systemName: "speaker.fill")
@@ -286,6 +394,7 @@ struct PlayerView: View {
                     Image(systemName: "speaker.wave.3.fill")
                 }
                 .padding(.horizontal)
+                
                 // AirPlay и очередь
                 HStack {
                     Button(action: {}) {
@@ -305,27 +414,24 @@ struct PlayerView: View {
                     }
                 }
                 .padding(.horizontal, 32)
+                
                 Spacer()
             }
         }
         .onAppear {
             audioManager.play(url: track.url, title: track.title, artist: track.artist, artwork: track.artwork)
         }
-        .onDisappear {
-            audioManager.stop()
-        }
-        .overlay(
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(.secondary)
-                    .padding()
-            }, alignment: .topTrailing
+        .gesture(
+            // Свайп вниз для сворачивания плеера
+            DragGesture()
+                .onEnded { value in
+                    if value.translation.height > 100 {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                            playerManager.isFullScreen = false
+                        }
+                    }
+                }
         )
-    }
-
-    func playTrack() {
-        audioManager.play(url: track.url)
     }
 
     func togglePlayPause() {
@@ -344,8 +450,9 @@ struct PlayerView: View {
     }
 }
 
-struct SearchView: View {
+struct MusicSearchView: View {
     @State private var searchText = ""
+    
     var body: some View {
         NavigationView {
             VStack {
@@ -356,12 +463,6 @@ struct SearchView: View {
             }
             .navigationTitle("Поиск")
         }
-    }
-}
-
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
     }
 }
 
@@ -390,11 +491,19 @@ struct DocumentPicker: UIViewControllerRepresentable {
 
     class Coordinator: NSObject, UIDocumentPickerDelegate {
         let completion: ([URL]) -> Void
+        
         init(completion: @escaping ([URL]) -> Void) {
             self.completion = completion
         }
+        
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             completion(urls)
         }
+    }
+}
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
     }
 }
