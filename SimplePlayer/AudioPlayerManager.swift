@@ -6,6 +6,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
     static let shared = AudioPlayerManager()
     private var player: AVAudioPlayer?
     @Published var isPlaying: Bool = false
+    @Published var currentTime: TimeInterval = 0
+    @Published var duration: TimeInterval = 0
     private var nowPlayingInfo: [String: Any] = [:]
     private var nowPlayingTimer: Timer?
     private var currentTrackURL: URL?
@@ -29,6 +31,8 @@ class AudioPlayerManager: NSObject, ObservableObject {
             currentTitle = title
             currentArtist = artist
             currentArtwork = artwork
+            duration = player?.duration ?? 0
+            currentTime = player?.currentTime ?? 0
             updateNowPlayingInfo()
             startNowPlayingTimer()
         } catch {
@@ -50,6 +54,12 @@ class AudioPlayerManager: NSObject, ObservableObject {
         isPlaying = false
         stopNowPlayingTimer()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        currentTime = 0
+    }
+    func seek(to time: TimeInterval) {
+        player?.currentTime = time
+        currentTime = time
+        updateNowPlayingPlaybackState()
     }
     private func updateNowPlayingInfo() {
         guard let player = player else { return }
@@ -75,7 +85,9 @@ class AudioPlayerManager: NSObject, ObservableObject {
     private func startNowPlayingTimer() {
         stopNowPlayingTimer()
         nowPlayingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.updateNowPlayingPlaybackState()
+            guard let self = self else { return }
+            self.currentTime = self.player?.currentTime ?? 0
+            self.updateNowPlayingPlaybackState()
         }
     }
     private func stopNowPlayingTimer() {

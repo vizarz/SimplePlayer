@@ -190,6 +190,8 @@ struct PlayerView: View {
     let track: Track
     let onClose: () -> Void
     @ObservedObject private var audioManager = AudioPlayerManager.shared
+    @State private var isSeeking = false
+    @State private var seekTime: Double = 0
 
     var body: some View {
         ZStack {
@@ -228,13 +230,30 @@ struct PlayerView: View {
                 .padding(.horizontal)
                 // Полоса перемотки и время
                 VStack {
-                    Slider(value: .constant(0), in: 0...1)
+                    Slider(
+                        value: Binding(
+                            get: {
+                                isSeeking ? seekTime : audioManager.currentTime
+                            },
+                            set: { newValue in
+                                isSeeking = true
+                                seekTime = newValue
+                            }
+                        ),
+                        in: 0...(audioManager.duration > 0 ? audioManager.duration : 1),
+                        onEditingChanged: { editing in
+                            if !editing {
+                                audioManager.seek(to: seekTime)
+                                isSeeking = false
+                            }
+                        }
+                    )
                     HStack {
-                        Text("--:--")
+                        Text(formatTime(isSeeking ? seekTime : audioManager.currentTime))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Spacer()
-                        Text("--:--")
+                        Text(formatTime(audioManager.duration))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -316,6 +335,13 @@ struct PlayerView: View {
             audioManager.resume()
         }
     }
+
+    func formatTime(_ time: TimeInterval) -> String {
+        guard !time.isNaN && !time.isInfinite else { return "--:--" }
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
 }
 
 struct SearchView: View {
@@ -372,4 +398,3 @@ struct DocumentPicker: UIViewControllerRepresentable {
         }
     }
 }
-//hi
